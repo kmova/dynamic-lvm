@@ -249,11 +249,14 @@ func (ns *node) NodePublishVolume(
 
 	vol, mountInfo, err := GetVolAndMountInfo(req)
 	if err != nil {
+		_ = vol
+		_ = mountInfo
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	podLVinfo, err := getPodLVInfo(req)
 	if err != nil {
+		_ = podLVinfo
 		klog.Warningf("PodLVInfo could not be obtained for volume_id: %s, err = %v", req.VolumeId, err)
 	}
 	switch req.GetVolumeCapability().GetAccessType().(type) {
