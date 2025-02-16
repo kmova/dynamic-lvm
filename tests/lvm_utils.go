@@ -79,7 +79,6 @@ func vgEmpty(name string) bool {
 	lvs, _, _ := execAtLocal("sudo", nil, args_lvs...)
 	lvs_str := strings.TrimSpace(string(lvs))
 	lv_cnt, _ := strconv.Atoi(lvs_str)
-	fmt.Printf("lvs cnt is %d\n", lv_cnt)
 	if lv_cnt != 0 {
 		return false
 	} else {

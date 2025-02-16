@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
@@ -12,6 +13,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
 
 	"github.com/openebs/lvm-localpv/pkg/lvm"
 	"github.com/openebs/lvm-localpv/tests/container"
@@ -249,14 +253,12 @@ func VerifyLVMVolume(expect_ready bool, expected_vg string) {
 			// It gets deleted, by the csi provisioner only when the owner node of cr marks is
 			// as Failed. So incase, we do a get of cr when the cr was being handled then we expect
 			// state to be either Pending or Failed.
-			fmt.Printf("checking vol object as vol is non nil, vol is %v\n", vol)
 			gomega.Expect(vol.Status.State).To(gomega.Or(gomega.Equal("Pending"), gomega.Equal("Failed")),
 				"While checking if lvmvolume: %s is in Pending or Failed state", pvcObj.Spec.VolumeName)
 		}
 	} else {
 		gomega.Expect(err).To(gomega.BeNil(), "while fetching the lvm volume {%s}", pvcObj.Spec.VolumeName)
 		if expected_vg != "" {
-			fmt.Printf("vol is %v\n", vol)
 			gomega.Expect(vol.Spec.VolGroup).To(gomega.Equal(expected_vg),
 				"while checking volume group of lvm volume", pvcObj.Spec.VolumeName)
 		} else {
@@ -318,6 +320,18 @@ func createAndVerifyPVC(expect_bound bool) {
 		pvcName,
 		OpenEBSNamespace,
 	)
+}
+
+// Verifies state of already created pvc based on expect_bound.
+func verifyPVC(pvc_name string, expect_bound bool) {
+	ok := false
+	if !expect_bound {
+		ok = IsPVCPendingConsistently(pvc_name)
+	} else {
+		ok = IsPVCBoundEventually(pvc_name)
+	}
+	gomega.Expect(ok).To(gomega.Equal(true),
+		"while checking the pvc status")
 }
 
 func createAndVerifyBlockPVC(expect_bound bool) {
@@ -818,4 +832,81 @@ func createNodeDaemonSet(ds *appsv1.DaemonSet) {
 	gomega.Expect(err).To(
 		gomega.BeNil(),
 		"creating node plugin daemonset %v", nodeDaemonSet)
+}
+
+// Creates a k8s client using kubeconfig path.
+func getk8sClient() (client *kubernetes.Clientset) {
+	kubeconfigPath := filepath.Join(homedir.HomeDir(), ".kube", "config")
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	gomega.Expect(err).To(
+		gomega.BeNil(),
+		"Could not created a k8s client",
+	)
+	client, c_err := kubernetes.NewForConfig(config)
+	gomega.Expect(c_err).To(
+		gomega.BeNil(),
+		"Could not created a k8s client",
+	)
+	return client
+}
+
+// Lists k8s nodes.
+func listNodes(client *kubernetes.Clientset) (nodes *corev1.NodeList) {
+	nodes, n_err := client.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	gomega.Expect(n_err).To(
+		gomega.BeNil(),
+		"Could not list nodes",
+	)
+	return nodes
+}
+
+// Cordons all k8s nodes.
+func cordonk8sNode() {
+	client := getk8sClient()
+	nodes := listNodes(client)
+	for _, node := range nodes.Items {
+		if !node.Spec.Unschedulable {
+			c_err := cordonNode(client, &node)
+			gomega.Expect(c_err).To(
+				gomega.BeNil(),
+				"Could not cordon node",
+			)
+		}
+
+	}
+}
+
+// UnCordons all k8s nodes.
+func uncordonk8sNode() {
+	client := getk8sClient()
+	nodes := listNodes(client)
+	for _, node := range nodes.Items {
+		if node.Spec.Unschedulable {
+			c_err := uncordonNode(client, &node)
+			gomega.Expect(c_err).To(
+				gomega.BeNil(),
+				"Could not uncordon node",
+			)
+		}
+	}
+}
+
+// Adds cordon taint to a specific node.
+func cordonNode(clientset *kubernetes.Clientset, node *corev1.Node) error {
+	updatedNode := node.DeepCopy()
+	updatedNode.Spec.Unschedulable = true
+
+	_, err := clientset.CoreV1().Nodes().Update(context.TODO(), updatedNode, metav1.UpdateOptions{})
+	return err
+
+}
+
+// Removes cordon taint from a specific node.
+func uncordonNode(clientset *kubernetes.Clientset, node *corev1.Node) error {
+	updatedNode := node.DeepCopy()
+	updatedNode.Spec.Unschedulable = false
+
+	_, err := clientset.CoreV1().Nodes().Update(context.TODO(), updatedNode, metav1.UpdateOptions{})
+	return err
+
 }
